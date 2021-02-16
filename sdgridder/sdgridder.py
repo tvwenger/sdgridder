@@ -118,6 +118,7 @@ def gridder(
     width=None,
     gauss_fwhm=None,
     pixel_size=None,
+    truncate=None,
     num_cpus=None,
     overwrite=False,
     verbose=False,
@@ -140,6 +141,8 @@ def gridder(
             FWHM of the convolution Gaussian. If None, use HPBW / 3
         pixel_size :: scalar (deg)
             Pixel size. If None, use HPBW / 5
+        truncate :: scalar (deg)
+            Truncate kernel at this distance
         num_cpus :: integer
             Number of CPUs to use for multiprocessing. If None,
             use all available.
@@ -240,14 +243,17 @@ def gridder(
     if pixel_size > beam_fwhm / 3.0:
         raise ValueError("Pixel size is larger than HPBW / 3")
 
-    # Support distance for convolution (3 sigma)
-    support_distance = 3.0 * gauss_sigma
+    # Support distance for convolution
+    if truncate is None:
+        support_distance = 3.0 * gauss_sigma
+    else:
+        support_distance = truncate
 
     # Generate image dimensions
-    glong_size = np.nanmax(glong) - np.nanmin(glong) + 2.0 * support_distance
-    glat_size = np.nanmax(glat) - np.nanmin(glat) + 2.0 * support_distance
-    glong_start = np.nanmax(glong) + support_distance
-    glat_start = np.nanmin(glat) - support_distance
+    glong_size = np.nanmax(glong) - np.nanmin(glong)
+    glat_size = np.nanmax(glat) - np.nanmin(glat)
+    glong_start = np.nanmax(glong)
+    glat_start = np.nanmin(glat)
     nx = int(np.ceil(glong_size / pixel_size)) + 1
     ny = int(np.ceil(glat_size / pixel_size)) + 1
     glong_axis = -np.arange(nx, dtype=np.float32) * pixel_size + glong_start

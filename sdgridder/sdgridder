@@ -66,6 +66,9 @@ parser.add_argument(
     "--pixel_size", type=float, default=None, help="Pixel size (deg)"
 )
 parser.add_argument(
+    "--truncate", type=float, default=None, help="Truncate kernel (deg)"
+)
+parser.add_argument(
     "--gauss_fwhm",
     type=float,
     default=None,
