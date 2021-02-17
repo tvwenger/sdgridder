@@ -25,12 +25,13 @@ Changelog:
 
 # TODO: handle NaNs in dot products? (a la smooth_regrid_spec)
 # TODO: remove hardcoded GBT parameters
-# TODO: implement Gaussian-Bessel kernel
+# TODO: correct final FWHM for Gaussian-Bessel kernel
 
 import time
 import multiprocessing as mp
 import sparse
 import numpy as np
+from scipy.special import j1
 from astropy.io import fits
 
 # speed of light (m/s)
@@ -113,10 +114,12 @@ def convolve(idx):
 def gridder(
     files,
     outname,
+    kernel="gaussian",
     start=None,
     end=None,
     width=None,
     gauss_fwhm=None,
+    bessel_width=None,
     pixel_size=None,
     truncate=None,
     num_cpus=None,
@@ -134,11 +137,18 @@ def gridder(
                 <outname>.texp.fits
                 <outname>.tsys.fits
                 <outname>.cube.fits
+        kernel :: string
+            Convolution kernel. Either gaussian or gaussbessel
         start, end, width :: scalars (km/s)
             Regrid the spectral axis to this velocity grid.
             If None, use native.
         gauss_fwhm :: scalar (deg)
-            FWHM of the convolution Gaussian. If None, use HPBW / 3
+            FWHM of the convolution Gaussian. If None, use
+            2 * sqrt(ln(2)/9) * HPBW for gaussian kernel or
+            2.52 * 2 * sqrt(ln(2)/9) * HPBW for gaussbessel kernel
+        bessel_width :: scalar (deg)
+            Width of convolution Bessel function. If None,  use
+            1.55 * HPBW / 3
         pixel_size :: scalar (deg)
             Pixel size. If None, use HPBW / 5
         truncate :: scalar (deg)
@@ -231,8 +241,15 @@ def gridder(
 
     # Get convolution Gaussian FWHM (deg)
     if gauss_fwhm is None:
-        gauss_fwhm = beam_fwhm / 3.0
+        if kernel == "gaussian":
+            gauss_fwhm = 2.0 * np.sqrt(np.log(2.0) / 9) * beam_fwhm
+        elif kernel == "gaussbessel":
+            gauss_fwhm = 2.52 * 2.0 * np.sqrt(np.log(2.0) / 9) * beam_fwhm
     gauss_sigma = gauss_fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+
+    # Get convolution Bessel function width (deg)
+    if bessel_width is None:
+        bessel_width = 1.55 * beam_fwhm / 3.0
 
     # Get FWHM resolution of final image
     final_fwhm = np.sqrt(beam_fwhm ** 2.0 + gauss_fwhm ** 2.0)
@@ -245,7 +262,7 @@ def gridder(
 
     # Support distance for convolution
     if truncate is None:
-        support_distance = 3.0 * gauss_sigma
+        support_distance = beam_fwhm
     else:
         support_distance = truncate
 
@@ -278,9 +295,31 @@ def gridder(
     # Evaluate the Gaussian convolution weights at each data point
     if verbose:
         print("Calculating convolution weights...")
-    conv_weights = np.exp(
-        -image_distance2 / (np.float32(2.0 * gauss_sigma ** 2.0))
-    )
+    if kernel == "gaussian":
+        if verbose:
+            print("Using Gaussian kernel")
+        conv_weights = np.exp(
+            -image_distance2 / (np.float32(2.0 * gauss_sigma ** 2.0))
+        )
+    elif kernel == "gaussbessel":
+        if verbose:
+            print("Using Gaussian x Bessel kernel")
+        # add small positive number to catch zeros in sparse matrix
+        image_distance = np.sqrt(image_distance2) + np.float32(1.0e-32)
+        conv_weights = j1(
+            np.abs(image_distance) * np.float32(np.pi / bessel_width)
+        )
+        # replace j1(np.inf) = np.nan with 0.0
+        conv_weights.fill_value = np.array(0.0)
+        conv_weights = conv_weights / (
+            np.abs(image_distance) * np.float32(np.pi / bessel_width)
+        )
+        conv_weights = conv_weights * np.exp(
+            -image_distance2 / (np.float32(2.0 * gauss_sigma ** 2.0))
+        )
+
+    # ensure convolution weights are masked > support_distance
+    conv_weights = conv_weights * (image_distance2 < support_distance ** 2.0)
 
     # Generate the texp image
     if verbose:
@@ -387,6 +426,14 @@ def gridder(
     hdu = fits.PrimaryHDU(tsys_image[..., None].T, header=hdr)
     hdu.writeto(fname, overwrite=overwrite)
 
+    # Save continuum image
+    fname = "{0}.cont.fits".format(outname)
+    if verbose:
+        print(f"Saving data cube to {fname}")
+    # add Stokes axis
+    hdu = fits.PrimaryHDU(image_cube[..., None].T, header=hdr)
+    hdu.writeto(fname, overwrite=overwrite)
+
     # Modify header for image cube
     hdr["NAXIS3"] = spec_size
     hdr["CRVAL3"] = new_velocity_axis[0]
@@ -396,14 +443,6 @@ def gridder(
 
     # Save image cube
     fname = "{0}.cube.fits".format(outname)
-    if verbose:
-        print(f"Saving data cube to {fname}")
-    # add Stokes axis
-    hdu = fits.PrimaryHDU(image_cube[..., None].T, header=hdr)
-    hdu.writeto(fname, overwrite=overwrite)
-
-    # Save continuum image
-    fname = "{0}.cont.fits".format(outname)
     if verbose:
         print(f"Saving data cube to {fname}")
     # add Stokes axis

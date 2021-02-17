@@ -45,6 +45,12 @@ parser.add_argument(
     help="Prefix for gridded FITS image filenames",
 )
 parser.add_argument(
+    "--kernel",
+    type=str,
+    default="gaussbessel",
+    help="Convolution kernel, either gaussian or gaussbessel",
+)
+parser.add_argument(
     "--start",
     type=float,
     default=None,
@@ -72,7 +78,13 @@ parser.add_argument(
     "--gauss_fwhm",
     type=float,
     default=None,
-    help="Convolution kernel FWHM (deg)",
+    help="Gaussian kernel FWHM (deg)",
+)
+parser.add_argument(
+    "--bessel_width",
+    type=float,
+    default=None,
+    help="Bessel kernel FWHM (deg)",
 )
 parser.add_argument(
     "--num_cpus",
